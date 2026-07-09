@@ -123,21 +123,32 @@ def extract_note_meta(url):
 # Download images
 # ---------------------------------------------------------------------------
 
-def download_media(url, output_dir):
+def download_media(url, output_dir, retries=3):
     """Download images/video via opencli xiaohongshu download. Returns list of downloaded files."""
     print(f"  Downloading media (images/video)...", file=sys.stderr)
     t0 = time.time()
-    result = run(
-        [
-            'opencli', 'xiaohongshu', 'download', url,
-            '--output', output_dir,
-            '-f', 'json',
-        ],
-        timeout=900,  # generous: video can be 500MB
-    )
-    if result.returncode != 0:
-        print(f"  Warning: download failed — {result.stderr.strip()}", file=sys.stderr)
+
+    for attempt in range(retries):
+        if attempt > 0:
+            delay = 2 * attempt
+            print(f"  Retry {attempt}/{retries} after {delay}s...", file=sys.stderr)
+            time.sleep(delay)
+
+        result = run(
+            [
+                'opencli', 'xiaohongshu', 'download', url,
+                '--output', output_dir,
+                '-f', 'json',
+            ],
+            timeout=900,  # generous: video can be 500MB
+        )
+        if result.returncode == 0:
+            break
+        print(f"  Download attempt {attempt+1} failed: {result.stderr.strip()[:200]}", file=sys.stderr)
+    else:
+        print(f"  Warning: download failed after {retries} attempts", file=sys.stderr)
         return []
+
     print(f"  Media downloaded in {time.time() - t0:.1f}s", file=sys.stderr)
 
     # Parse the JSON output to find downloaded files
