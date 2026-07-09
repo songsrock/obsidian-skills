@@ -21,6 +21,13 @@ No `pip install` needed — `uv run --script` handles `yt-dlp`, `youtube-transcr
 
 ### 2. Install the skill
 
+#### npx
+```bash
+npx skills add songsrock/obsidian-skills --skill youtube-to-obsidian -g -y
+```
+
+#### Manual
+
 Copy this directory into your agent's skills folder. For example:
 
 ```bash
