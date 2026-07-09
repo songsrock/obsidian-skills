@@ -27,13 +27,17 @@ Any of these in the user's message alongside a 小红书 URL (xiaohongshu.com/ex
 | Type | Content extraction | Media handling |
 |------|-------------------|----------------|
 | 图文笔记 | Text directly from `opencli xiaohongshu note` | Download images to Obsidian assets |
-| 视频笔记 | Download video → extract audio → Whisper transcribe | Skip video file (too large for Obsidian) |
+| 视频笔记 | Download video → extract audio → Whisper transcribe → delete video | Only transcript kept (video deleted after audio extraction) |
+
+> **Note type detection:** The script downloads media first, then checks for .mp4 files to determine the real note type. Video notes often have description text in the API — this is NOT used as the primary content.
 
 ## Workflow
 
 ### Step 1: Extract content
 
 Use the bundled script. Scripts are in the skill directory — use `$SKILL_DIR` to reference the install path.
+
+> The script auto-detects note type by checking downloaded media: if an .mp4 file is present, it's a video note (even if the API shows text content).
 
 ```bash
 uv run --script "$SKILL_DIR/xhs-extract.py" "<xiaohongshu-url>" --output-dir "$TMPDIR/xhs-summary"

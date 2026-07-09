@@ -238,12 +238,7 @@ def main():
     meta = extract_note_meta(args.url)
     title = meta.get('title', 'Untitled')
     author = meta.get('author', '')
-    content = meta.get('content', '')
-    note_type = 'video' if not content else 'image'
-
-    print(f"  Title: {title}", file=sys.stderr)
-    print(f"  Author: {author}", file=sys.stderr)
-    print(f"  Type: {note_type} note", file=sys.stderr)
+    note_text = meta.get('content', '')
 
     safe_title = sanitize_filename(title)
     content_path = os.path.join(output_dir, f'{safe_title} - content.txt')
@@ -251,47 +246,45 @@ def main():
     os.makedirs(media_dir, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # 2. Extract content
+    # 2. Download media first — then determine note type from files
+    # ------------------------------------------------------------------
+    media_files = download_media(args.url, media_dir)
+    video_files = [f for f in media_files if f.endswith('.mp4')]
+    images = [f for f in media_files if not f.endswith('.mp4')]
+
+    # REAL note type: check downloaded media, not the API content field
+    # (video notes often have a description text that looks like "content")
+    note_type = 'video' if video_files else 'image'
+
+    print(f"  Title: {title}", file=sys.stderr)
+    print(f"  Author: {author}", file=sys.stderr)
+    print(f"  Type: {note_type} note", file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # 3. Extract content
     # ------------------------------------------------------------------
     source = None
-    images = []
 
     if note_type == 'image':
-        # Direct text extraction
+        # Direct text extraction from note body
         with open(content_path, 'w', encoding='utf-8') as f:
-            f.write(content)
+            f.write(note_text)
         source = 'note_text'
 
-        # Download images
-        media_files = download_media(args.url, media_dir)
-        images = [f for f in media_files if not f.endswith('.mp4')]
-
     else:
-        # Video note: download, extract audio, transcribe
-        media_files = download_media(args.url, media_dir)
-        video_files = [f for f in media_files if f.endswith('.mp4')]
-        images = [f for f in media_files if not f.endswith('.mp4')]
+        # Video note: transcribe the downloaded video
+        video_path = video_files[0]
 
-        if not video_files:
-            print("  Warning: no video file found after download", file=sys.stderr)
-            # Still create a content file with just metadata
-            with open(content_path, 'w', encoding='utf-8') as f:
-                f.write(f"标题: {title}\n作者: {author}\n(视频下载失败)\n")
-            source = 'metadata_only'
-        else:
-            # Use the first (and usually only) video
-            video_path = video_files[0]
+        # Determine language for Whisper
+        lang = args.lang
+        if not lang:
+            lang = 'zh' if _has_chinese(title) else None
 
-            # Determine language for Whisper
-            lang = args.lang
-            if not lang:
-                lang = 'zh' if _has_chinese(title) else None
+        duration = transcribe_video(video_path, content_path, lang=lang)
+        source = 'whisper'
 
-            duration = transcribe_video(video_path, content_path, lang=lang)
-            source = 'whisper'
-
-            # Clean up video file (too large to keep)
-            os.unlink(video_path)
+        # Clean up video file immediately — only audio was needed
+        os.unlink(video_path)
 
     # ------------------------------------------------------------------
     # 3. Resolve Obsidian vault
