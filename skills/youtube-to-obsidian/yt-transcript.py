@@ -328,99 +328,8 @@ def process_video(url, lang, out_dir, index=None, total=None, obsidian_dir=None)
     return meta_dict, transcript_source
 
 
-CONFIG_DIR = os.path.join(os.environ.get('XDG_CONFIG_HOME', os.path.join(os.path.expanduser('~'), '.config')), 'yt2obsidian')
-CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
-
-
-def _find_obsidian_vaults():
-    """Scan common locations for directories containing .obsidian/. Returns list of paths."""
-    home = os.path.expanduser('~')
-    candidates = [
-        os.path.join(home, 'obsidian'),
-        os.path.join(home, 'Obsidian'),
-        os.path.join(home, 'Documents', 'obsidian'),
-        os.path.join(home, 'Documents', 'Obsidian'),
-        os.path.join(home, 'Documents'),
-        os.path.join(home, 'Notes'),
-        os.path.join(home, 'notes'),
-    ]
-    if sys.platform == 'darwin':
-        candidates.append(os.path.join(home, 'Library', 'Mobile Documents', 'iCloud~md~obsidian', 'Documents'))
-    elif sys.platform == 'win32':
-        appdata = os.environ.get('APPDATA', '')
-        if appdata:
-            candidates.append(os.path.join(appdata, 'obsidian'))
-
-    vaults = []
-    seen = set()
-    for base in candidates:
-        resolved = os.path.realpath(base)
-        if resolved in seen or not os.path.isdir(resolved):
-            continue
-        seen.add(resolved)
-        if os.path.isdir(os.path.join(resolved, '.obsidian')):
-            vaults.append(resolved)
-        else:
-            try:
-                for entry in os.scandir(resolved):
-                    if entry.is_dir() and os.path.isdir(os.path.join(entry.path, '.obsidian')):
-                        rp = os.path.realpath(entry.path)
-                        if rp not in seen:
-                            seen.add(rp)
-                            vaults.append(rp)
-            except PermissionError:
-                continue
-    return vaults
-
-
-def resolve_obsidian_dir():
-    """Resolve the Obsidian YouTube Notes directory. Priority:
-    1. OBSIDIAN_VAULT env var
-    2. Saved config file
-    3. Auto-detect vault and save to config
-    Returns (path, needs_user_confirmation: bool). If multiple vaults found and no
-    config exists, returns (None, True) — caller should ask the user."""
-    env_val = os.environ.get('OBSIDIAN_VAULT')
-    if env_val:
-        path = os.path.join(env_val, 'YouTube Notes') if 'YouTube' not in env_val else env_val
-        return path, False
-
-    if os.path.isfile(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE) as f:
-                cfg = json.load(f)
-            saved = cfg.get('obsidian_dir')
-            if saved and os.path.isdir(os.path.dirname(saved)):
-                return saved, False
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    vaults = _find_obsidian_vaults()
-    if len(vaults) == 1:
-        yt_dir = os.path.join(vaults[0], 'YouTube Notes')
-        _save_config(yt_dir)
-        print(f"  Auto-detected vault: {vaults[0]}", file=sys.stderr)
-        print(f"  Notes will be saved to: {yt_dir}", file=sys.stderr)
-        print(f"  (saved to {CONFIG_FILE})", file=sys.stderr)
-        return yt_dir, False
-    elif len(vaults) > 1:
-        print(f"  Multiple Obsidian vaults found:", file=sys.stderr)
-        for i, v in enumerate(vaults, 1):
-            print(f"    {i}. {v}", file=sys.stderr)
-        print(f"  Set OBSIDIAN_VAULT env var or pass --obsidian-dir to choose.", file=sys.stderr)
-        return None, True
-    else:
-        default = os.path.join(os.path.expanduser('~'), 'obsidian', 'YouTube Notes')
-        print(f"  No Obsidian vault found. Using default: {default}", file=sys.stderr)
-        print(f"  Set OBSIDIAN_VAULT env var to override.", file=sys.stderr)
-        return default, False
-
-
-def _save_config(obsidian_dir):
-    """Save resolved obsidian_dir to config file."""
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump({'obsidian_dir': obsidian_dir}, f, indent=2)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from obsidian_vault import resolve_vault
 
 
 def main():
@@ -443,7 +352,7 @@ def main():
     elif args.obsidian_dir:
         obsidian_dir = args.obsidian_dir
     else:
-        obsidian_dir, _ = resolve_obsidian_dir()
+        obsidian_dir, _ = resolve_vault('YouTube Notes')
 
     # Detect playlist URLs
     is_playlist = args.playlist or is_playlist_url(args.url)

@@ -31,65 +31,48 @@ import time
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _has_chinese(text):
-    return bool(re.search(r'[\u4e00-\u9fff]', text))
-
 def sanitize_filename(name):
     """Strip characters unsafe for filenames."""
     return re.sub(r'[<>:"/\\|?*]', '_', name).strip()[:120]
 
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.gif', '.avif'}
+
+
 def run(cmd, timeout=30, capture=True, check=False):
     """Run a command, return CompletedProcess. timeout=None for no limit."""
-    kwargs = dict(text=True, timeout=timeout)
+    kwargs = dict(text=True, timeout=timeout, check=check)
     if capture:
         kwargs['stdout'] = subprocess.PIPE
         kwargs['stderr'] = subprocess.PIPE
     return subprocess.run(cmd, **kwargs)
 
-def find_obsidian_vault():
-    """Find the Obsidian vault path (same logic as yt-transcript)."""
-    if os.environ.get('OBSIDIAN_VAULT'):
-        return os.environ['OBSIDIAN_VAULT']
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from obsidian_vault import resolve_vault
 
-    config_path = os.path.expanduser('~/.config/xhs2obsidian/config.json')
-    try:
-        with open(config_path) as f:
-            return json.load(f)['vault']
-    except (FileNotFoundError, KeyError, json.JSONDecodeError):
-        pass
 
-    candidates = [
-        os.path.expanduser('~/obsidian'),
-        os.path.expanduser('~/Documents/obsidian'),
-        os.path.expanduser('~/Documents'),
-        os.path.expanduser('~/Notes'),
-    ]
-    if sys.platform == 'darwin':
-        candidates.append(
-            os.path.expanduser(
-                '~/Library/Mobile Documents/iCloud~md~obsidian/Documents'
-            )
-        )
-    elif sys.platform == 'win32':
-        candidates.append(os.path.join(os.environ.get('APPDATA', ''), 'obsidian'))
-
-    vaults = []
-    for c in candidates:
-        if os.path.isdir(os.path.join(c, '.obsidian')):
-            vaults.append(c)
-
-    if len(vaults) == 1:
-        os.makedirs(os.path.dirname(config_path), exist_ok=True)
-        with open(config_path, 'w') as f:
-            json.dump({'vault': vaults[0]}, f)
-        return vaults[0]
-    elif len(vaults) > 1:
-        print(
-            f"Multiple vaults found: {vaults}. "
-            "Set OBSIDIAN_VAULT env var or pass --obsidian-dir.",
-            file=sys.stderr,
-        )
+def _find_existing_note(obsidian_dir, note_url, safe_title):
+    """Check if a note for this URL already exists. Returns path or None."""
+    if not obsidian_dir or not os.path.isdir(obsidian_dir):
         return None
+    note_url = note_url.split('?')[0].rstrip('/')
+    for fname in os.listdir(obsidian_dir):
+        if not fname.endswith('.md'):
+            continue
+        fpath = os.path.join(obsidian_dir, fname)
+        try:
+            with open(fpath, 'r', encoding='utf-8') as f:
+                head = f.read(4096)
+            m = re.search(r'^url:\s*(.+)$', head, re.MULTILINE)
+            if m:
+                saved_url = m.group(1).strip().split('?')[0].rstrip('/')
+                if saved_url == note_url:
+                    return fpath
+        except (OSError, UnicodeDecodeError):
+            continue
+    # Fallback: filename match
+    expected = os.path.join(obsidian_dir, f"{safe_title}.md")
+    if os.path.exists(expected):
+        return expected
     return None
 
 
@@ -138,9 +121,8 @@ def download_media(url, output_dir, retries=3):
             [
                 'opencli', 'xiaohongshu', 'download', url,
                 '--output', output_dir,
-                '-f', 'json',
             ],
-            timeout=900,  # generous: video can be 500MB
+            timeout=900,
         )
         if result.returncode == 0:
             break
@@ -151,11 +133,11 @@ def download_media(url, output_dir, retries=3):
 
     print(f"  Media downloaded in {time.time() - t0:.1f}s", file=sys.stderr)
 
-    # Parse the JSON output to find downloaded files
     files = []
     for root, dirs, filenames in os.walk(output_dir):
         for fn in filenames:
-            if not fn.endswith('.tmp'):
+            ext = os.path.splitext(fn)[1].lower()
+            if ext in IMAGE_EXTENSIONS or ext == '.mp4':
                 files.append(os.path.join(root, fn))
     return files
 
@@ -165,9 +147,8 @@ def download_media(url, output_dir, retries=3):
 # ---------------------------------------------------------------------------
 
 def transcribe_video(video_path, output_path, lang=None):
-    """Extract audio from video, transcribe with faster-whisper, save transcript."""
-    import shutil
-
+    """Extract audio from video, transcribe with faster-whisper, save transcript.
+    Returns (duration_seconds, segment_count)."""
     audio_path = video_path + '.wav'
 
     # 1. Extract audio with ffmpeg
@@ -193,23 +174,29 @@ def transcribe_video(video_path, output_path, lang=None):
     from faster_whisper import WhisperModel
 
     model = WhisperModel('small', device='cpu', compute_type='int8')
-    segments, info = model.transcribe(audio_path, language=lang, beam_size=5)
+    segments, info = model.transcribe(audio_path, language=lang or 'zh', beam_size=5)
 
+    seg_count = 0
     with open(output_path, 'w', encoding='utf-8') as f:
         for seg in segments:
-            f.write(seg.text.strip() + '\n')
+            text = seg.text.strip()
+            if text:
+                f.write(text + '\n')
+                seg_count += 1
 
     duration = info.duration
     print(
         f"  Transcription complete in {time.time() - t0:.1f}s "
-        f"(audio: {duration:.0f}s)",
+        f"(audio: {duration:.0f}s, {seg_count} segments)",
         file=sys.stderr,
     )
 
-    # Clean up audio
+    if seg_count == 0:
+        print("  Warning: Whisper produced no text (video may have no speech)", file=sys.stderr)
+
     os.unlink(audio_path)
 
-    return info.duration
+    return duration, seg_count
 
 
 # ---------------------------------------------------------------------------
@@ -236,12 +223,23 @@ def main():
         default=None,
         help='Obsidian vault path (overrides auto-detect)',
     )
+    parser.add_argument(
+        '--no-skip',
+        action='store_true',
+        help='Do not skip notes already saved in Obsidian',
+    )
     args = parser.parse_args()
 
     output_dir = args.output_dir or os.path.join(
         tempfile.gettempdir(), 'xhs-summary'
     )
     os.makedirs(output_dir, exist_ok=True)
+
+    # Resolve Obsidian vault early (needed for skip check)
+    if args.obsidian_dir:
+        note_dir = args.obsidian_dir
+    else:
+        note_dir, _ = resolve_vault('小红书笔记')
 
     # ------------------------------------------------------------------
     # 1. Get note metadata
@@ -252,6 +250,18 @@ def main():
     note_text = meta.get('content', '')
 
     safe_title = sanitize_filename(title)
+
+    # ------------------------------------------------------------------
+    # Skip check: see if note already exists in Obsidian
+    # ------------------------------------------------------------------
+    if not args.no_skip and note_dir and os.path.isdir(note_dir):
+        existing = _find_existing_note(note_dir, args.url, safe_title)
+        if existing:
+            print(f"  Already in Obsidian: {existing}", file=sys.stderr)
+            print("\n--- JSON ---")
+            print(json.dumps({'skipped': True, 'title': title, 'existing': existing}, ensure_ascii=False))
+            return
+
     content_path = os.path.join(output_dir, f'{safe_title} - content.txt')
     media_dir = os.path.join(output_dir, 'media')
     os.makedirs(media_dir, exist_ok=True)
@@ -261,7 +271,7 @@ def main():
     # ------------------------------------------------------------------
     media_files = download_media(args.url, media_dir)
     video_files = [f for f in media_files if f.endswith('.mp4')]
-    images = [f for f in media_files if not f.endswith('.mp4')]
+    images = [f for f in media_files if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS]
 
     # REAL note type: check downloaded media, not the API content field
     # (video notes often have a description text that looks like "content")
@@ -277,30 +287,26 @@ def main():
     source = None
 
     if note_type == 'image':
-        # Direct text extraction from note body
+        if not note_text.strip():
+            print("  Warning: note has no text content (image-only note)", file=sys.stderr)
         with open(content_path, 'w', encoding='utf-8') as f:
             f.write(note_text)
-        source = 'note_text'
+        source = 'note_text' if note_text.strip() else 'note_text_empty'
 
     else:
         # Video note: transcribe the downloaded video
         video_path = video_files[0]
 
-        # Determine language for Whisper
-        lang = args.lang
-        if not lang:
-            lang = 'zh' if _has_chinese(title) else None
+        # Video cover images are not meaningful — keep only transcript
+        images = []
 
-        duration = transcribe_video(video_path, content_path, lang=lang)
-        source = 'whisper'
+        lang = args.lang or 'zh'
+
+        duration, seg_count = transcribe_video(video_path, content_path, lang=lang)
+        source = 'whisper' if seg_count > 0 else 'whisper_empty'
 
         # Clean up video file immediately — only audio was needed
         os.unlink(video_path)
-
-    # ------------------------------------------------------------------
-    # 3. Resolve Obsidian vault
-    # ------------------------------------------------------------------
-    vault = args.obsidian_dir or find_obsidian_vault()
 
     # ------------------------------------------------------------------
     # 4. Output metadata as JSON
@@ -317,9 +323,9 @@ def main():
         'content_path': content_path,
         'images': images,
         'output_dir': output_dir,
-        'obsidian_vault': vault,
-        'note_dir': os.path.join(vault or '', '小红书笔记') if vault else None,
+        'note_dir': note_dir,
     }
+    print("\n--- JSON ---")
     print(json.dumps(output, ensure_ascii=False))
 
 

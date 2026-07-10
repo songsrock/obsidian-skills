@@ -21,21 +21,22 @@ No `pip install` needed — `uv run --script` handles `yt-dlp`, `youtube-transcr
 
 ### 2. Install the skill
 
-#### npx
+**Ask your agent** — paste this into your AI agent (Claude Code, etc.):
+
+> Install the youtube-to-obsidian skill from github.com/songsrock/obsidian-skills
+
+The agent will clone the repo and copy the skill into its skills directory.
+
+**Or install manually:**
+
 ```bash
+# One-liner (requires npx)
 npx skills add songsrock/obsidian-skills --skill youtube-to-obsidian -g -y
-```
 
-#### Manual
-
-Copy this directory into your agent's skills folder. For example:
-
-```bash
-# Claude Code
-cp -r youtube-to-obsidian ~/.claude/skills/
-
-# Or any other agent harness that supports skill directories
-cp -r youtube-to-obsidian /path/to/your/agent/skills/
+# Or manually clone and copy
+git clone https://github.com/songsrock/obsidian-skills.git /tmp/obsidian-skills
+cp -r /tmp/obsidian-skills/skills/youtube-to-obsidian ~/.claude/skills/
+rm -rf /tmp/obsidian-skills
 ```
 
 ### 3. Obsidian vault

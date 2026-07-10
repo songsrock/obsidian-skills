@@ -1,7 +1,7 @@
 ---
 name: xhs-to-obsidian
 description: Extract content from Xiaohongshu (小红书) notes and save AI-summarized markdown to Obsidian. Handles image notes (text extraction) and video notes (Whisper transcription). Use when user sends a Xiaohongshu URL with keywords like "总结", "summarize", "obsidian", "保存", "笔记", "摘要".
-compatibility: Requires uv, ffmpeg, Chrome logged into xiaohongshu.com, opencli, and an Obsidian vault. Set OBSIDIAN_VAULT env var or default is ~/obsidian/小红书笔记.
+compatibility: This skill requires uv, ffmpeg, opencli, and Chrome logged into xiaohongshu.com. Without opencli (which handles Xiaohongshu auth/browser automation), the skill cannot extract notes. Dependencies (faster-whisper) are auto-installed by uv.
 ---
 
 # 小红书 → Obsidian Summary
@@ -18,16 +18,36 @@ Any of these in the user's message alongside a 小红书 URL (xiaohongshu.com/ex
 
 ## Prerequisites
 
-- Chrome logged into xiaohongshu.com (opencli reuses the Chrome session)
-- uv, ffmpeg installed (`brew install uv ffmpeg`)
-- `opencli` available (used for Xiaohongshu login/auth)
+| 依赖 | 用途 | 安装 |
+|------|------|------|
+| **opencli CLI** | 🔑 小红书登录认证 + 笔记提取 + 媒体下载 | `npm install -g opencli` |
+| **opencli Chrome 扩展** | 🌉 CLI 与浏览器之间的通信桥梁 | Chrome Web Store 搜索 "opencli"（首次运行 CLI 时会提示安装） |
+| Chrome | opencli 复用 Chrome 登录态 | 系统自带即可 |
+| uv | Python PEP 723 脚本运行 | macOS/Linux: `brew install uv` · Windows: `winget install astral-sh.uv` |
+| ffmpeg | 视频音频提取 | macOS/Linux: `brew install ffmpeg` · Windows: `winget install Gyan.FFmpeg` |
+
+### 初始化流程
+
+```bash
+# 1. 安装 CLI
+npm install -g opencli
+
+# 2. 安装 Chrome 扩展（首次运行会提示 Web Store 链接，点击安装即可）
+#    验证是否就绪：
+opencli doctor
+
+# 3. 登录小红书（会弹出 Chrome 窗口，扫码一次即可）
+opencli xiaohongshu login
+```
+
+> ⚠️ 如果没有安装 opencli + Chrome 扩展 + 登录小红书，此 skill 完全无法使用。这是不同于 youtube-to-obsidian 的关键差异——后者不需要登录也不需要浏览器扩展。
 
 ## Note Types
 
 | Type | Content extraction | Media handling |
 |------|-------------------|----------------|
 | 图文笔记 | Text directly from `opencli xiaohongshu note` | Download images to Obsidian assets |
-| 视频笔记 | Download video → extract audio → Whisper transcribe → delete video | Only transcript kept (video deleted after audio extraction) |
+| 视频笔记 | Download video → extract audio → Whisper transcribe → delete video | Only transcript kept (video + cover image discarded after audio extraction) |
 
 > **Note type detection:** The script downloads media first, then checks for .mp4 files to determine the real note type. Video notes often have description text in the API — this is NOT used as the primary content.
 
@@ -52,12 +72,15 @@ The URL must include `xsec_token` (from browser share or feed). Short links (xhs
   - Whisper transcription: ~10s per minute of video content
   - Use `timeout=900` for videos longer than 30 minutes
 
-The script outputs:
-- `Source: note_text` for 图文笔记
-- `Source: whisper` for 视频笔记 (transcribed audio)
+The script outputs JSON after a `--- JSON ---` separator:
+- `source: "note_text"` for 图文笔记 with text
+- `source: "note_text_empty"` for image-only notes (no text body — summarize from images instead)
+- `source: "whisper"` for 视频笔记 (transcribed audio)
+- `source: "whisper_empty"` for video with no speech (only title/metadata available)
+- `skipped: true` if note already exists in Obsidian (skip further processing)
 - Transcript/content saved to `$TMPDIR/xhs-summary/<title> - content.txt`
-- Downloaded images saved to `$TMPDIR/xhs-summary/images/`
-- JSON metadata line with `title`, `author`, `url`, `type`, `likes`, `content_path`, `images`
+- Downloaded images saved to `$TMPDIR/xhs-summary/media/`
+- JSON fields: `title`, `author`, `url`, `type`, `likes`, `source`, `content_path`, `images`, `note_dir`
 
 ### Step 2: Read content
 
@@ -88,7 +111,7 @@ rm -rf "$TMPDIR/xhs-summary"
 
 ## Image Notes (图文笔记)
 
-For 图文笔记, the script:
+对于 图文笔记, the script:
 1. Extracts title, body text, and metadata via `opencli xiaohongshu note`
 2. Downloads all images via `opencli xiaohongshu download`
 3. Saves text to content file and images to `images/` subdirectory
@@ -99,7 +122,7 @@ When saving to Obsidian:
 
 ## Video Notes (视频笔记)
 
-For 视频笔记, the script:
+对于 视频笔记, the script:
 1. Extracts title and metadata via `opencli xiaohongshu note` (content is empty for videos)
 2. Downloads the video via `opencli xiaohongshu download`
 3. Extracts audio track with ffmpeg (`ffmpeg -i video.mp4 -vn -acodec pcm_s16le audio.wav`)
@@ -107,6 +130,8 @@ For 视频笔记, the script:
 5. Saves transcript to content file
 
 ⚠️ Video files are 100-500MB. The script cleans up the video after audio extraction. Only the transcript is kept.
+
+> **Video cover images are discarded** — the cover thumbnail that downloads alongside the video is not meaningful content and is not saved to Obsidian. Only 图文 notes have their images preserved.
 
 ## Obsidian Vault
 
