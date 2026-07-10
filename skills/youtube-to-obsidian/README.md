@@ -41,7 +41,7 @@ rm -rf /tmp/obsidian-skills
 
 ### 3. Obsidian vault
 
-The skill **auto-detects** your Obsidian vault on first run by scanning common locations for `.obsidian/` directories. The result is saved to `~/.config/yt2obsidian/config.json` so detection only happens once.
+The skill **auto-detects** your Obsidian vault on first run by scanning common locations for `.obsidian/` directories. The result is saved to `~/.config/obsidian-skills/config.json` so detection only happens once.
 
 To override, set `OBSIDIAN_VAULT`:
 ```bash
