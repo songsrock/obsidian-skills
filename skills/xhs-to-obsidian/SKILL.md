@@ -138,7 +138,7 @@ When saving to Obsidian:
 The script resolves the vault automatically (in priority order):
 
 1. **`OBSIDIAN_VAULT` env var** — if set, used directly
-2. **Config file** (`~/.config/xhs2obsidian/config.json`) — saved after first successful detection
+2. **Config file** (`~/.config/obsidian-skills/config.json`) — saved after first successful detection
 3. **Auto-detect** — scans common locations for `.obsidian/` directories:
    - `~/obsidian`, `~/Documents/obsidian`, `~/Documents`, `~/Notes`
    - macOS: `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/`
