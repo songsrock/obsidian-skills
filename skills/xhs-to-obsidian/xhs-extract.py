@@ -287,11 +287,31 @@ def main():
     source = None
 
     if note_type == 'image':
-        if not note_text.strip():
-            print("  Warning: note has no text content (image-only note)", file=sys.stderr)
-        with open(content_path, 'w', encoding='utf-8') as f:
-            f.write(note_text)
-        source = 'note_text' if note_text.strip() else 'note_text_empty'
+        # Guard: if text is suspiciously short (< 200 chars), the note may actually
+        # be a video slideshow mislabeled as image. Check for leftover mp4 files.
+        if len(note_text.strip()) < 200:
+            leftover_mp4s = []
+            for root, dirs, filenames in os.walk(media_dir):
+                for fn in filenames:
+                    if fn.endswith('.mp4'):
+                        leftover_mp4s.append(os.path.join(root, fn))
+            if leftover_mp4s:
+                print(
+                    f"  Sparse text ({len(note_text.strip())} chars) + {len(leftover_mp4s)} mp4(s) found — "
+                    f"likely a video slideshow, switching to Whisper",
+                    file=sys.stderr,
+                )
+                video_files = leftover_mp4s
+                note_type = 'video'
+                images = []
+                # fall through to video branch below
+
+        if note_type == 'image':
+            if not note_text.strip():
+                print("  Warning: note has no text content (image-only note)", file=sys.stderr)
+            with open(content_path, 'w', encoding='utf-8') as f:
+                f.write(note_text)
+            source = 'note_text' if note_text.strip() else 'note_text_empty'
 
     else:
         # Video note: transcribe the downloaded video

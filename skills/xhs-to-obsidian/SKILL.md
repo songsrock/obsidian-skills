@@ -48,8 +48,18 @@ opencli xiaohongshu login
 |------|-------------------|----------------|
 | 图文笔记 | Text directly from `opencli xiaohongshu note` | Download images to Obsidian assets |
 | 视频笔记 | Download video → extract audio → Whisper transcribe → delete video | Only transcript kept (video + cover image discarded after audio extraction) |
+| 图文笔记（视频幻灯片） | API 标为图文，但文字极短 + 有 mp4 文件 → 自动切换 Whisper | 同视频笔记 |
 
 > **Note type detection:** The script downloads media first, then checks for .mp4 files to determine the real note type. Video notes often have description text in the API — this is NOT used as the primary content.
+>
+> **Edge case — 视频幻灯片伪装成图文笔记:** 有些笔记 API 返回 `type: image` 且有文字描述，但文字只是简短推广语（<200字），实际内容是视频口播。脚本会自动检测：如果文字很短且有 mp4 文件，自动切换到 Whisper 转录路径。
+>
+> **Agent 手动 fallback:** 如果脚本输出 `source: "note_text"` 但文字内容明显不完整（如仅有一两句推广语），说明视频下载可能失败或脚本未能自动切换。此时应手动检查 `media/` 下是否有 mp4，如有则用 Whisper 转录：
+>
+> ```bash
+> ffmpeg -i media/*/xxx.mp4 -vn -acodec pcm_s16le -ar 16000 -ac 1 audio.wav
+> # 用 faster-whisper small 模型转录
+> ```
 
 ## Workflow
 
@@ -151,6 +161,9 @@ Notes are saved to `<vault>/小红书笔记/` (created if needed).
 - `uv run --script "$SKILL_DIR/xhs-extract.py"` — Extract note content or transcribe video (deps auto-installed by uv)
 
 ## Known Issues
+
+### 视频幻灯片被 API 标为图文笔记
+某些创作者把视频口播配上幻灯片导出，API 返回 `type: image` 且有简短推广文字。脚本 v2 已自动检测：文字 < 200 字 + 存在 mp4 → 自动切 Whisper。如果仍漏网，agent 应手动走 Whisper 流程（见 Note Types 中的 fallback 指引）。
 
 ### xsec_token expiration
 小红书 share URLs contain `xsec_token` that expire. If the URL returns 404, ask the user to re-share the note from the app.
